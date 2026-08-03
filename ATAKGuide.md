@@ -131,7 +131,7 @@ If ATAK is functioning normally, continue.
 
 Select the TAK PTT icon.
 
-*(Insert Screenshot 1 Here)*
+
 
 The Push-To-Talk interface opens.
 
@@ -173,7 +173,7 @@ The Voice Status screen should display:
 | Protocol | RTP |
 | Network | Wi-Fi |
 
-*(Insert Screenshot 2 Here)*
+
 
 If these values are different, contact your administrator.
 
@@ -183,7 +183,7 @@ If these values are different, contact your administrator.
 
 Open the Voice Channel Configuration screen.
 
-*(Insert Screenshot 3 Here)*
+
 
 Configure:
 
