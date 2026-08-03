@@ -337,28 +337,30 @@ The Nucleus automatically transports voice across the VLoRa network.
 
 The operator does not need to know how the transport works, but the data path is shown below.
 
-```
-
-ATAK
-↓
-RTP
-↓
-Opus
-↓
-Nucleus Bridge
-↓
-Codec2
-↓
-LoRa
-↓
-Codec2
-↓
-Opus
-↓
-RTP
-↓
-ATAK
-
+```text
+                         LoRa Voice Link
+                    Codec2 3200 / Port 256
+                              │
+                 ┌────────────┴────────────┐
+                 │                         │
+           Alpha Nucleus             Bravo Nucleus
+                 │                         │
+        vlora_tx_bridge.py         vlora_tx_bridge.py
+      RTP/Opus → PCM → Codec2    RTP/Opus → PCM → Codec2
+                 │                         │
+          cot_bridge.py TX          cot_bridge.py TX
+                 │                         │
+             LoRa TX/RX                LoRa TX/RX
+                 │                         │
+          cot_bridge.py RX          cot_bridge.py RX
+                 │                         │
+        vlora_rx_bridge.py         vlora_rx_bridge.py
+      Codec2 → PCM → Opus/RTP    Codec2 → PCM → Opus/RTP
+                 │                         │
+        239.5.5.1:17501          239.5.5.1:17501
+                 │                         │
+           ATAK Vx Clients          ATAK Vx Clients
+         0024-nucleus-ap          0025-nucleus-ap
 ```
 
 ---
