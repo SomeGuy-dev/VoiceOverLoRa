@@ -1,0 +1,19 @@
+[Unit]
+Description=VLoRa voice gateway - hardware PTT headset (nucleus-voice) <-> ATAK Vx, keeps nucleus-voice on LoRa stream (alpha)
+After=network-online.target nucleus-voice.service vlora-rx-bridge.service
+Wants=network-online.target
+StartLimitIntervalSec=0
+
+[Service]
+Type=simple
+# Root required: packet socket on lo to copy the headset's Codec2 frames.
+User=root
+Environment=PYTHONUNBUFFERED=1
+ExecStart=/opt/nucleus/venv/bin/python /opt/nucleus/vlora/vlora_voice_gateway.py
+Restart=always
+RestartSec=5
+StandardOutput=journal
+StandardError=journal
+
+[Install]
+WantedBy=multi-user.target
