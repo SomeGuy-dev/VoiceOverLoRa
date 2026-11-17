@@ -22,15 +22,38 @@ RAW_CODEC2_HOST = "127.0.0.1"
 RAW_CODEC2_PORT = 4245
 
 OPUS_FRAME_SAMPLES   = 960
-CODEC2_FRAME_BYTES   = 8
-CODEC2_FRAME_SAMPLES = 160
+CODEC2_MODE          = 3200      # bps: 3200 or 2400 (the RX bridge MUST use the same)
+CODEC2_FRAME_BYTES   = {3200: 8, 2400: 6}[CODEC2_MODE]
+CODEC2_FRAME_SAMPLES = 160       # 20 ms at 8 kHz in both modes
 SILENCE_TIMEOUT      = 0.5
+
+PACKET_BYTES  = 144    # MUST equal cot_bridge STREAM_MAX_PAYLOAD (18 x 8 B @3200, 24 x 6 B @2400)
+SEND_SPACING  = 0.30   # s between LoRa packets; receiver dead-time needs >= ~0.25 s (144 B / 0.30 s = 480 B/s = 1.2x speech)
+PRIME_SILENCE = True   # send one throwaway silence packet first (absorbs the INIT collision)
+PAD_TO_PACKET = True   # pad the clip with silence so no short tail packet waits on cot_bridge
+assert PACKET_BYTES % CODEC2_FRAME_BYTES == 0
 
 logging.basicConfig(
     level=logging.INFO,
     format="%(asctime)s [vlora_tx] %(message)s",
 )
 log = logging.getLogger("vlora_tx")
+
+
+def build_packets(c2_out):
+    """Split a clip into PACKET_BYTES chunks, with optional silence prime (first)
+    and silence padding (last). Silence comes from a fresh encoder so the live
+    encoder state is untouched."""
+    sil = bytes(pycodec2.Codec2(CODEC2_MODE).encode(
+        np.zeros(CODEC2_FRAME_SAMPLES, dtype=np.int16)))
+    assert len(sil) == CODEC2_FRAME_BYTES
+    data = bytes(c2_out)
+    if PAD_TO_PACKET and len(data) % PACKET_BYTES:
+        data += sil * ((-len(data) % PACKET_BYTES) // CODEC2_FRAME_BYTES)
+    packets = [data[i:i + PACKET_BYTES] for i in range(0, len(data), PACKET_BYTES)]
+    if PRIME_SILENCE:
+        packets.insert(0, sil * (PACKET_BYTES // CODEC2_FRAME_BYTES))
+    return packets
 
 
 def main():
@@ -44,7 +67,7 @@ def main():
     tx = socket.socket(socket.AF_INET, socket.SOCK_DGRAM)
 
     dec      = opuslib.Decoder(48000, 1)
-    c2_state = pycodec2.Codec2(3200)
+    c2_state = pycodec2.Codec2(CODEC2_MODE)
 
     # PCM buffer accumulates 8kHz samples until we have a full Codec2 frame
     pcm8_buf  = np.array([], dtype=np.float32)
@@ -56,6 +79,9 @@ def main():
 
     log.info(f"Listening ATAK Vx RTP/Opus on {VX_GROUP}:{VX_PORT}")
     log.info(f"Forwarding Codec2 → UDP {RAW_CODEC2_HOST}:{RAW_CODEC2_PORT}")
+    log.info(f"Codec2 mode {CODEC2_MODE} bps ({CODEC2_FRAME_BYTES} B/frame), "
+             f"{PACKET_BYTES} B packets every {SEND_SPACING}s, "
+             f"prime={PRIME_SILENCE} pad={PAD_TO_PACKET}")
 
     while True:
         try:
@@ -103,16 +129,23 @@ def main():
                 receiving = False
 
                 if c2_out:
-                    # Send in 72-byte chunks to cot_bridge
+                    # Send PACKET_BYTES chunks to cot_bridge, one every SEND_SPACING
                     sock = socket.socket(socket.AF_INET, socket.SOCK_DGRAM)
+                    speech_bytes = len(c2_out)
+                    packets = build_packets(c2_out)
                     total_c2 = 0
-                    for i in range(0, len(c2_out), 72):
-                        chunk = bytes(c2_out[i:i + 72])
+                    t0 = time.monotonic()
+                    for n, chunk in enumerate(packets):
+                        wait = t0 + n * SEND_SPACING - time.monotonic()
+                        if wait > 0:
+                            time.sleep(wait)
                         sock.sendto(chunk, (RAW_CODEC2_HOST, RAW_CODEC2_PORT))
                         total_c2 += len(chunk)
-                        time.sleep(0.005)
+                    sock.close()
 
                     log.info(f"PTT released — sent {total_c2}B Codec2 "
+                             f"({speech_bytes}B speech, {len(packets)} packets, "
+                             f"mode {CODEC2_MODE}, spacing {SEND_SPACING}s) "
                              f"to cot_bridge UDP:{RAW_CODEC2_PORT}")
                     c2_out   = bytearray()
                     pcm8_buf = np.array([], dtype=np.float32)
