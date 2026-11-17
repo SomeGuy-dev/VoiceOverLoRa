@@ -35,45 +35,58 @@ The result: an operator presses PTT in ATAK on Node A, speaks, and a teammate on
 
 ```mermaid
 flowchart LR
-    subgraph A["Node A (Nucleus)"]
+    subgraph A["Alpha: 0024-nucleus, LAN 10.20.24.1"]
         direction TB
-        EUDA["ATAK EUD<br/>Vx plugin"]
+        EUDA["ATAK EUDs<br/>Vx plugin"]
         VXA(["Vx channel<br/>239.5.5.1:17501<br/>RTP / Opus"])
-        TXA["vlora_tx_bridge.py<br/>Opus to Codec2 3200<br/>holds message until release<br/>levels it, then sends"]
-        RXA["vlora_rx_bridge.py<br/>Codec2 to Opus<br/>streams as packets arrive<br/>auto gain"]
-        COTA["cot_bridge<br/>raw Codec2 in: UDP 4245<br/>decoded voice out: UDP 4244"]
-        HS["Headset + USB-C PTT<br/>(optional)"]
-        NV["nucleus-voice<br/>(V3_OS, transport = stream)"]
-        GW["vlora_voice_gateway.py<br/>(optional)"]
+        TXA["vlora_tx_bridge.py<br/>Opus to Codec2 3200<br/>holds message until release,<br/>levels it, then sends"]
+        RXA["vlora_rx_bridge.py<br/>Codec2 to Opus<br/>streams as packets arrive,<br/>auto gain"]
+        GWA["vlora_voice_gateway.py<br/>(service)"]
+        NVA["nucleus-voice<br/>(transport = stream)"]
+        HSA["Headset + USB-C PTT<br/>(when plugged in)"]
+        COTA["cot_bridge<br/>Codec2 in: UDP 4245<br/>voice out: UDP 4244"]
         EUDA <-->|Wi-Fi| VXA
-        VXA -->|PTT audio| TXA
-        TXA -->|"144 B packets, one per 0.30 s"| COTA
+        VXA -->|tablet PTT audio| TXA
+        TXA -->|"144 B packets,<br/>one per 0.30 s"| COTA
         COTA -->|Codec2| RXA
         RXA -->|RTP / Opus| VXA
-        HS <-->|"mic, earcups, button"| NV
-        NV -->|"live Codec2, 8 B per 20 ms"| COTA
-        NV <-.->|"local copy, this node only"| GW
-        GW <-.-> VXA
+        VXA <-.->|"local only"| GWA
+        GWA <-.->|"local only"| NVA
+        HSA <-->|"mic, earcups, button"| NVA
+        NVA -->|"live Codec2,<br/>8 B per 20 ms"| COTA
     end
 
-    subgraph B["Node B (Nucleus)"]
+    subgraph B["Bravo: 0025-nucleus, LAN 10.20.25.1"]
         direction TB
-        COTB["cot_bridge"]
-        RXB["vlora_rx_bridge.py"]
-        TXB["vlora_tx_bridge.py"]
-        VXB(["Vx channel<br/>239.5.5.1:17501"])
-        EUDB["ATAK EUD<br/>Vx plugin"]
+        EUDB["ATAK EUDs<br/>Vx plugin"]
+        VXB(["Vx channel<br/>239.5.5.1:17501<br/>RTP / Opus"])
+        TXB["vlora_tx_bridge.py<br/>Opus to Codec2 3200<br/>holds message until release,<br/>levels it, then sends"]
+        RXB["vlora_rx_bridge.py<br/>Codec2 to Opus<br/>streams as packets arrive,<br/>auto gain"]
+        GWB["vlora_voice_gateway.py<br/>(service)"]
+        NVB["nucleus-voice<br/>(transport = stream)"]
+        HSB["Headset + USB-C PTT<br/>(when plugged in)"]
+        COTB["cot_bridge<br/>Codec2 in: UDP 4245<br/>voice out: UDP 4244"]
+        EUDB <-->|Wi-Fi| VXB
+        VXB -->|tablet PTT audio| TXB
+        TXB -->|"144 B packets,<br/>one per 0.30 s"| COTB
         COTB -->|Codec2| RXB
-        RXB --> VXB
-        VXB --> TXB
-        TXB --> COTB
-        VXB <-->|Wi-Fi| EUDB
+        RXB -->|RTP / Opus| VXB
+        VXB <-.->|"local only"| GWB
+        GWB <-.->|"local only"| NVB
+        HSB <-->|"mic, earcups, button"| NVB
+        NVB -->|"live Codec2,<br/>8 B per 20 ms"| COTB
     end
 
     COTA <==>|"LoRa, port 256, hop limit 0<br/>SX1262 915 MHz, SF7"| COTB
 ```
 
-Both nodes run the same software stack, and any node can carry a headset. There is no hub/spoke relationship: if one node goes down, the other keeps working on its own.
+Alpha and Bravo are symmetrical: each node runs the same five pieces (`cot_bridge`, both VLoRa bridges, `nucleus-voice` and the gateway service), and each can take a headset. Solid arrows carry voice that goes over LoRa; dotted arrows are the gateway's copies, which stay on their own node and are never sent over LoRa again. The only per-node differences are addresses: Alpha's LAN `10.20.24.1` and mesh `10.20.1.24`, Bravo's LAN `10.20.25.1` and mesh `10.20.1.25`. Another node follows the same pattern with its own number. There is no hub/spoke relationship: if one node goes down, the other keeps working on its own.
+
+| Voice path | Over LoRa? |
+|---|---|
+| Tablet on Alpha → tablets on Bravo (and the reverse) | Yes: TX bridge → `cot_bridge` → LoRa → `cot_bridge` → RX bridge |
+| Headset on Alpha → tablets and headset on Bravo (and the reverse) | Yes: `nucleus-voice` → `cot_bridge` → LoRa → RX bridge, then Bravo's gateway for its headset |
+| Headset ↔ tablets on the same node | No: the gateway, local only |
 
 ### How a transmission travels
 
@@ -100,8 +113,9 @@ Both nodes run the same software stack, and any node can carry a headset. There 
 | `shared/cot_bridge.py` | Both nodes | Modified Nucleus LoRa CoT bridge. Adds a raw Codec2 UDP input (port 4245) and forwards decoded LoRa voice to UDP port 4244. All existing CoT/SA/chat functionality is untouched; the changes are additive only. On V3_OS the built-in `nucleusd` cot_bridge provides this (see `v3os/`). |
 | `alpha/vlora_tx_bridge.py`, `bravo/vlora_tx_bridge.py` | Per node | Captures ATAK Vx RTP/Opus PTT traffic, transcodes to Codec2 and hands it to `cot_bridge` in paced 144 B packets. Ignores traffic from its own node's IP, so locally injected voice is never sent twice. |
 | `alpha/vlora_rx_bridge.py`, `bravo/vlora_rx_bridge.py` | Per node | Receives Codec2 voice from `cot_bridge`, transcodes back to Opus/RTP and injects it into the local ATAK Vx channel. Streaming decode: audio starts playing as packets arrive. |
-| `alpha/vlora_voice_gateway.py` | Nodes with a headset | Optional. Links `nucleus-voice` (the headset) with the local Vx channel, so tablets on the same node hear the headset and the headset hears ATAK and LoRa voice. Local to the node: it never transmits on LoRa. |
+| `alpha/vlora_voice_gateway.py`, `bravo/vlora_voice_gateway.py` | Per node (for a headset) | Links `nucleus-voice` (the headset) with the local Vx channel, so tablets on the same node hear the headset and the headset hears ATAK and LoRa voice. Keeps `nucleus-voice` on LoRa streaming. Local to the node: it never transmits on LoRa. The same file on every node; addresses are passed on the command line. Harmless on a node with no headset. |
 | `*/vlora-tx-bridge.service`, `*/vlora-rx-bridge.service` | Per node | systemd units so both bridges start on boot and restart on failure. |
+| `alpha/vlora-voice-gateway.alpha.service`, `bravo/vlora-voice-gateway.bravo.service` | Per node | systemd unit for the gateway, with that node's addresses. Installed as `/etc/systemd/system/vlora-voice-gateway.service`. |
 | `v3os/` | V3_OS nodes | Deployment notes, service units and the `cot_bridge` sender-prefix patch for V3_OS. |
 
 The `alpha` and `bravo` folders hold functionally identical scripts. The only difference is the node's local IP address, set as a constant (`VX_BIND_IP`, `MCAST_IF_IP`, `LOCAL_NODE_IP`). Deploying to another node means copying either folder and updating those constants.
@@ -110,19 +124,22 @@ The `alpha` and `bravo` folders hold functionally identical scripts. The only di
 
 V3_OS ships a voice daemon, `nucleus-voice` (`nucleusd.voice.daemon`), with built-in support for USB PTT adapters. When a supported adapter is plugged in, it takes the adapter's mic, earcups and button automatically (it logs `NBT POC attached`). VLoRa uses it as-is and adds a small gateway on the node.
 
-**Setup on the node the headset plugs into:**
+**One-time install, on every node** (the gateway waits harmlessly on a node with no headset, so the headset can move between nodes):
 
-1. Plug the PTT adapter into the node, with the headset connected to it. Check the journal: `sudo journalctl -u nucleus-voice -n 20` should show the adapter attached and `PTT: watching /dev/hidrawN`.
-2. Switch `nucleus-voice` to LoRa streaming. It starts on `ip` (Wi-Fi mesh only) every time it launches:
-   ```
-   echo -n "TRANSPORT stream" | nc -u -w1 127.0.0.1 5556
-   ```
-   Check with `echo -n STATUS | nc -u -w1 127.0.0.1 5556` (look for `"transport": "stream"`).
-3. Run the gateway (needs root; Alpha defaults shown, other nodes pass their own addresses):
-   ```
-   sudo /opt/nucleus/venv/bin/python /opt/nucleus/vlora/vlora_voice_gateway.py
-   # other nodes: --vx-if 10.20.<n>.1 --mesh-if 10.20.1.<n> --daemon-node <n>
-   ```
+```
+sudo cp vlora_voice_gateway.py /opt/nucleus/vlora/
+sudo cp vlora-voice-gateway.<node>.service /etc/systemd/system/vlora-voice-gateway.service
+sudo systemctl daemon-reload
+sudo systemctl enable --now vlora-voice-gateway
+sudo journalctl -u vlora-voice-gateway -n 10 --no-pager
+```
+
+The journal should end with `nucleus-voice answering (transport stream, headset attached)` (or `not attached`). For another node, copy a service file and set `--vx-if 10.20.<n>.1 --mesh-if 10.20.1.<n> --daemon-node <n>` on its `ExecStart` line.
+
+**Using it:**
+
+1. Plug the PTT adapter into the node, with the headset connected to it. The gateway logs `headset attached: card N`.
+2. That's it. `nucleus-voice` starts on transport `ip` (Wi-Fi mesh only) every time it launches; the gateway checks every 5 s and switches it to `stream` (it logs `transport ip -> stream`). To check by hand: `echo -n STATUS | nc -u -w1 127.0.0.1 5556`, looking for `"hardware": true` and `"transport": "stream"`.
 
 **Use:** hold the PTT button, speak, release. Over LoRa the far end hears you live, about a second behind. Tablets on the same node hear you through the gateway. Incoming ATAK and LoRa voice plays in the earcups, with automatic gain.
 
@@ -130,6 +147,8 @@ V3_OS ships a voice daemon, `nucleus-voice` (`nucleusd.voice.daemon`), with buil
 
 - **Headset to ATAK:** it copies `nucleus-voice`'s 8 B Codec2 frames off the loopback interface (`cot_bridge` still receives the originals), decodes them and sends them into the Vx channel from the node's own IP. `vlora_tx_bridge.py` ignores that IP, so nothing is sent over LoRa twice.
 - **ATAK to headset:** it decodes Vx voice (tablets and LoRa voice from `vlora_rx_bridge.py`), applies automatic gain and hands it to `nucleus-voice` with multicast TTL 0, so it stays on the node.
+- **Keeps the transport:** it asks `nucleus-voice` for its status every 5 s and sets `stream` if a restart reset it. `--transport off` leaves the setting alone.
+- If any part fails (for example the network isn't up yet at boot), it exits and systemd restarts it after 5 s.
 - Each received message is logged with its level and saved to `/tmp/vgw/` for checking.
 
 ## LoRa Radio Configuration (important)
@@ -198,14 +217,15 @@ numpy
 - Voice quality and latency are governed by the LoRa link's spreading factor (see above). This is a physical constraint of LoRa, not a software limitation. At long range or high SF, voice will be choppy or badly delayed.
 - TX and RX bridges must match on every node. Mismatched encoder and decoder implementations (e.g. one node on a subprocess-based Codec2 path, the other on a different library) can produce unintelligible audio even on a healthy link. Always deploy matching bridge versions to every node.
 - One talker at a time. Two people transmitting at once garble each other at the far end.
-- Hardware PTT: `nucleus-voice` returns to `transport ip` whenever it restarts, so the `TRANSPORT stream` command must be re-sent. The gateway runs by hand for now; a service unit is planned.
+- Hardware PTT: `nucleus-voice` returns to `transport ip` whenever it restarts. The gateway puts it back within about 5 s, so a transmission in those first seconds after a restart goes over the Wi-Fi mesh only.
+- The gateway holds `nucleus-voice` on `stream`. Choosing another transport in the Nucleus UI is undone within 5 s unless the gateway is stopped or run with `--transport off`.
 - On V3_OS, `nucleus-voice` and `vlora_rx_bridge.py` both bind UDP 4244, and only one of them receives incoming LoRa voice (on the tested nodes, `vlora_rx_bridge.py`). The gateway is what gets that voice to the headset.
 
 ## Status
 
-- **Working:** ATAK voice in both directions between two Nucleus nodes at SF7. A hardware PTT headset talking to and hearing ATAK users on another node over LoRa, and on its own node through the gateway.
+- **Working:** ATAK voice in both directions between two Nucleus nodes at SF7. A hardware PTT headset talking to and hearing ATAK users on another node over LoRa, and on its own node through the gateway. The gateway runs as a service on both nodes and keeps `nucleus-voice` on LoRa streaming.
 - **Being deployed:** TX-side message levelling and RX-side auto gain in the bridges (bench-tested; packet format unchanged, so mixed versions still interoperate).
-- **Next:** gateway and transport setting as services, burst-loss investigation, start-up loss fix, and field range testing at lower spreading factors.
+- **Next:** reboot test of the gateway service, headset tests on the second node, burst-loss investigation, start-up loss fix, and field range testing at lower spreading factors.
 
 ## Acknowledgments
 
