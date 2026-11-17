@@ -24,9 +24,10 @@ VX_BIND_IP = "10.20.24.1"
 RTP_SSRC   = 0x06165C5B
 RTP_PT     = 0x00
 
-CODEC2_FRAME_BYTES = 8
+CODEC2_MODE        = 3200   # bps: 3200 or 2400 (the TX bridge MUST use the same)
+CODEC2_FRAME_BYTES = {3200: 8, 2400: 6}[CODEC2_MODE]
 OPUS_FRAME_SAMPLES = 960
-SILENCE_TIMEOUT    = 0.25
+SILENCE_TIMEOUT = 1.0
 
 logging.basicConfig(
     level=logging.INFO,
@@ -62,9 +63,10 @@ def main():
     frames_in  = 0
     frames_out = 0
     bad_frames = 0
-    c2_state   = pycodec2.Codec2(3200)
+    c2_state   = pycodec2.Codec2(CODEC2_MODE)
 
-    log.info(f"Listening Codec2 on UDP {UDP_LISTEN_HOST}:{UDP_LISTEN_PORT}")
+    log.info(f"Listening Codec2 {CODEC2_MODE} bps ({CODEC2_FRAME_BYTES} B/frame) "
+             f"on UDP {UDP_LISTEN_HOST}:{UDP_LISTEN_PORT}")
     log.info(f"Injecting RTP/Opus → {VX_GROUP}:{VX_PORT} via {VX_BIND_IP} (streaming mode)")
 
     while True:
@@ -81,7 +83,7 @@ def main():
                 bad_frames = 0
                 carry      = bytearray()
                 pcm48_buf  = np.array([], dtype=np.float32)
-                c2_state   = pycodec2.Codec2(3200)
+                c2_state   = pycodec2.Codec2(CODEC2_MODE)
             continue
 
         if not chunk:
